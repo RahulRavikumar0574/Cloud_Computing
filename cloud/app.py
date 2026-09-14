@@ -1,173 +1,261 @@
 import os
 import sys
-import torch
-import json
 import uuid
+import time
+import json
 import logging
-from typing import List, Dict, Any
-from fastapi import FastAPI, Request, HTTPException
-from pydantic import BaseModel
+from contextlib import asynccontextmanager
+from typing import List, Dict, Any, Optional
+from pathlib import Path
 
-from explainability.explainer import RuntimeXAIExplainer
-from models.bilstm_model import SyscallBiLSTM
-from preprocessing.pipeline import (
-    SessionWindowBuilder, 
-    PipelineArtifacts, 
-    SequenceTokenizer, 
-    TabularFeatureExtractor
-)
+from fastapi import FastAPI, Request, HTTPException, status
+from fastapi.responses import JSONResponse
+from pydantic import BaseModel, Field
+
+# Ensure project root is in sys.path
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+from preprocessing.pipeline import SequenceTokenizer, TabularFeatureExtractor
 from cloud.azure_storage import AzureBlobTelemetryIngester
+from cloud.event_dispatcher import SecurityEventDispatcher
+from cloud.engine import SecurityInferenceEngine
+from cloud.monitoring import metrics_client
 
 # Alias classes into __main__ namespace to resolve pickle loading mismatch
 sys.modules['__main__'].SequenceTokenizer = SequenceTokenizer
 sys.modules['__main__'].TabularFeatureExtractor = TabularFeatureExtractor
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("CloudSecurityAPI")
+logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
 
-# Globals for models and pipeline
-app = FastAPI(title="Azure Cloud-Native Security Engine")
 
 class Globals:
+    engine: Optional[SecurityInferenceEngine] = None
+    ingester: Optional[AzureBlobTelemetryIngester] = None
+    dispatcher: Optional[SecurityEventDispatcher] = None
+    startup_time: float = 0.0
+
+    # Backwards compatibility handles
     tokenizer = None
     tabular_extractor = None
     bilstm_model = None
     xai_explainer = None
-    ingester = None
+
 
 def init():
-    """Simulates Azure ML init() paradigm for loading models and artifacts."""
-    logger.info("Initializing models and artifacts...")
-    
-    # Load preprocessing artifacts
+    """Initializes the ML inference engine, Azure storage ingester, and event dispatcher."""
+    logger.info("Initializing models and adapters...")
     artifacts_dir = os.environ.get("ARTIFACTS_DIR", "artifacts")
-    try:
-        Globals.tokenizer, Globals.tabular_extractor = PipelineArtifacts.load_artifacts(artifacts_dir)
-    except Exception as e:
-        logger.error(f"Failed to load preprocessing artifacts: {e}")
-        raise
-        
-    # Load BiLSTM model
-    bilstm_path = os.path.join(artifacts_dir, "bilstm_model.pt")
-    try:
-        state_dict = torch.load(bilstm_path, map_location=torch.device('cpu'))
-        checkpoint_vocab_size = state_dict["embedding.weight"].shape[0]
-        Globals.bilstm_model = SyscallBiLSTM(vocab_size=checkpoint_vocab_size)
-        Globals.bilstm_model.load_state_dict(state_dict)
-        Globals.bilstm_model.eval()
-    except Exception as e:
-        logger.error(f"Failed to load BiLSTM model: {e}")
-        raise
-        
-    # Initialize XAI Explainer
-    xgb_path = os.path.join(artifacts_dir, "xgboost_model.json")
-    try:
-        feature_names = Globals.tabular_extractor.feature_cols
-        Globals.xai_explainer = RuntimeXAIExplainer(model_path=xgb_path, feature_names=feature_names)
-    except Exception as e:
-        logger.error(f"Failed to load XGBoost / XAI explainer: {e}")
-        raise
-        
-    # Initialize Ingester
-    Globals.ingester = AzureBlobTelemetryIngester()
-    
-    logger.info("Initialization complete.")
 
-@app.on_event("startup")
-async def startup_event():
+    try:
+        Globals.engine = SecurityInferenceEngine(artifacts_dir=artifacts_dir)
+        # Populate backward-compatibility properties
+        Globals.tokenizer = Globals.engine.tokenizer
+        Globals.tabular_extractor = Globals.engine.tabular_extractor
+        Globals.bilstm_model = Globals.engine.bilstm_model
+        Globals.xai_explainer = Globals.engine.xai_explainer
+
+        Globals.ingester = AzureBlobTelemetryIngester()
+        Globals.dispatcher = SecurityEventDispatcher()
+        Globals.startup_time = time.time()
+        logger.info("API services initialized successfully.")
+    except Exception as e:
+        logger.error(f"Failed to initialize engine and adapters: {e}", exc_info=True)
+        raise
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """FastAPI modern lifespan context manager replacing deprecated on_event."""
     init()
+    yield
+    logger.info("Shutting down CloudSecurityAPI...")
 
-@app.post("/detect")
-async def run(request: Request):
+
+app = FastAPI(
+    title="Azure Cloud-Native Container Security Engine",
+    description="Real-time Kubernetes Container Breakout Detection with Explainable AI (SHAP)",
+    version="2.0.0",
+    lifespan=lifespan
+)
+
+
+# Correlation ID & Metrics Middleware
+@app.middleware("http")
+async def correlation_id_middleware(request: Request, call_next):
+    correlation_id = request.headers.get("x-correlation-id", str(uuid.uuid4()))
+    request.state.correlation_id = correlation_id
+    start_time = time.time()
+    response = await call_next(request)
+    latency_ms = (time.time() - start_time) * 1000.0
+    metrics_client.record_request(request.url.path, latency_ms, response.status_code)
+    response.headers["x-correlation-id"] = correlation_id
+    return response
+
+
+# --- Pydantic Schemas ---
+
+class TelemetryEvent(BaseModel):
+    timestamp: Optional[str] = None
+    container_id: Optional[str] = "unknown"
+    pod_name: Optional[str] = "unknown"
+    namespace: Optional[str] = "default"
+    syscall: str
+    process_name: Optional[str] = "unknown"
+    return_value: Optional[int] = 0
+    is_threat: Optional[int] = 0
+    attack_type: Optional[str] = "None"
+
+    model_config = {"extra": "allow"}
+
+
+class FeatureContribution(BaseModel):
+    feature: str
+    contribution: float
+    description: str
+
+
+class IncidentReportModel(BaseModel):
+    incident_id: str
+    container_id: str
+    pod_name: str
+    overall_risk_score: float
+    bilstm_score: float
+    xgb_score: float
+    attack_classification: str
+    shap_top_indicators: List[Dict[str, Any]]
+
+
+class DetectionResponse(BaseModel):
+    status: str
+    correlation_id: Optional[str] = None
+    processed_windows: int = 0
+    threats_detected: int = 0
+    reports: List[Dict[str, Any]] = []
+    message: Optional[str] = None
+
+
+# --- Endpoints ---
+
+@app.get("/health", tags=["Health Probes"])
+async def health():
+    """Liveness probe: returns 200 if the process is alive."""
+    return {
+        "status": "healthy",
+        "service": "cloud-sec-api",
+        "uptime_seconds": round(time.time() - Globals.startup_time, 2) if Globals.startup_time else 0
+    }
+
+
+@app.get("/ready", tags=["Health Probes"])
+async def ready():
+    """Readiness probe: verifies ML models and pipeline artifacts are loaded into memory."""
+    if Globals.engine and Globals.engine.is_ready:
+        return {
+            "status": "ready",
+            "models_loaded": True,
+            "artifacts_dir": Globals.engine.artifacts_dir,
+            "storage_mode": Globals.ingester.auth_mode if Globals.ingester else "unknown",
+            "event_grid_mode": Globals.dispatcher.mode if Globals.dispatcher else "unknown"
+        }
+    raise HTTPException(
+        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+        detail="Models and pipeline artifacts are not fully loaded."
+    )
+
+
+@app.post("/detect", tags=["Inference"])
+async def detect(request: Request):
     """
-    Simulates Azure ML run() paradigm.
     Accepts raw container runtime event batches and performs ensemble inference.
+    Dispatches high-risk alerts to Event Grid and logs SHAP attribution.
     """
+    correlation_id = getattr(request.state, "correlation_id", str(uuid.uuid4()))
     body_bytes = await request.body()
     body_str = body_bytes.decode("utf-8").strip()
 
     if not body_str:
-        return {"status": "success", "message": "No events to process", "processed_windows": 0, "threats_detected": 0, "reports": []}
+        return {
+            "status": "success",
+            "correlation_id": correlation_id,
+            "message": "No events to process",
+            "processed_windows": 0,
+            "threats_detected": 0,
+            "reports": []
+        }
 
     try:
-        # Try standard JSON array first
+        # Standard JSON first
         payload = json.loads(body_str)
     except json.JSONDecodeError:
-        # Fallback: Parse NDJSON (line-by-line JSON)
+        # Fallback: NDJSON (line-by-line JSON)
         try:
             payload = [json.loads(line) for line in body_str.splitlines() if line.strip()]
         except Exception:
-            raise HTTPException(status_code=400, detail="Invalid JSON payload")
+            raise HTTPException(status_code=400, detail="Invalid JSON payload format")
 
     if not isinstance(payload, list):
-        raise HTTPException(status_code=400, detail="Payload must be a list of events")
-        
+        raise HTTPException(status_code=400, detail="Payload must be a list of telemetry events")
+
     if not payload:
-        return {"status": "success", "message": "No events to process", "processed_windows": 0, "threats_detected": 0, "reports": []}
-        
-    # Process through pipeline
-    window_builder = SessionWindowBuilder(window_size_events=50)
-    windows = window_builder.build_windows(payload)
-    
-    if not windows:
-        return {"status": "success", "message": "No complete windows built", "processed_windows": 0, "threats_detected": 0, "reports": []}
-        
-    X_tabular, _ = Globals.tabular_extractor.extract(windows)
-    X_seq = Globals.tokenizer.transform(windows)
-    
-    # Inference
-    reports = []
-    
-    # BiLSTM predictions
-    X_seq_tensor = torch.tensor(X_seq, dtype=torch.long)
-    with torch.no_grad():
-        bilstm_out = Globals.bilstm_model(X_seq_tensor)
-        bilstm_probs = torch.sigmoid(bilstm_out).numpy()
-        
-    # XGBoost predictions
-    xgb_probs = Globals.xai_explainer.model.predict_proba(X_tabular.values)[:, 1] if Globals.xai_explainer.model.predict_proba(X_tabular.values).shape[1] > 1 else Globals.xai_explainer.model.predict_proba(X_tabular.values)[:, 0]
-    
-    # Iterate through windows
-    for i, window in enumerate(windows):
-        container_id = window.get("container_id", "unknown")
-        pod_name = window.get("pod_name", "unknown")
-        
-        bilstm_score = float(bilstm_probs[i])
-        xgb_score = float(xgb_probs[i])
-        
-        # Ensemble risk score (average)
-        overall_risk_score = (bilstm_score + xgb_score) / 2.0
-        
-        if overall_risk_score > 0.65:
-            # Trigger XAI Explainer
-            session_features = X_tabular.iloc[i].values
-            explanation = Globals.xai_explainer.explain_session(session_features)
-            
-            # Simulated event dispatch
-            incident_id = str(uuid.uuid4())
-            logger.warning(f"High risk detected! Dispatched to Azure Event Grid: Incident {incident_id}")
-            
-            report = {
-                "incident_id": incident_id,
-                "container_id": container_id,
-                "pod_name": pod_name,
-                "overall_risk_score": overall_risk_score,
-                "bilstm_score": bilstm_score,
-                "xgb_score": xgb_score,
-                "attack_classification": window.get("attack_type", "Unknown"),
-                "shap_top_indicators": explanation.get("top_indicators", [])
-            }
-            reports.append(report)
-            
-            # Upload to egress
-            report_name = f"incident_{incident_id}.json"
-            Globals.ingester.upload_egress_report(report_name, report)
-            
-    return {
-        "status": "success",
-        "processed_windows": len(windows),
-        "threats_detected": len(reports),
-        "reports": reports
-    }
+        return {
+            "status": "success",
+            "correlation_id": correlation_id,
+            "message": "No events to process",
+            "processed_windows": 0,
+            "threats_detected": 0,
+            "reports": []
+        }
+
+    # Ensure engine is loaded
+    if not Globals.engine or not Globals.engine.is_ready:
+        raise HTTPException(status_code=503, detail="Inference engine is not ready")
+
+    try:
+        # Run detection through core engine
+        result = Globals.engine.run_detection(payload)
+        reports = result.get("reports", [])
+
+        # Process egress uploads and event grid alerts for high risk incidents
+        for report in reports:
+            # Upload to egress alerts storage
+            report_name = f"incident_{report['incident_id']}.json"
+            if Globals.ingester:
+                Globals.ingester.upload_egress_report(report_name, report)
+
+            # Dispatch to Azure Event Grid
+            if Globals.dispatcher:
+                Globals.dispatcher.dispatch_incident(report)
+
+        # Track telemetry metrics
+        max_risk = max([r.get("overall_risk_score", 0.0) for r in reports], default=0.0)
+        metrics_client.record_inference(result.get("processed_windows", 0), len(reports), max_risk)
+
+        return {
+            "status": "success",
+            "correlation_id": correlation_id,
+            "processed_windows": result.get("processed_windows", 0),
+            "threats_detected": result.get("threats_detected", 0),
+            "reports": reports
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        metrics_client.record_inference_failure(str(e))
+        logger.error(f"[CID {correlation_id}] Inference error: {e}", exc_info=True)
+        # Shield internal stack trace from client
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Inference error occurred. Reference Correlation ID: {correlation_id}"
+        )
+
+
+@app.get("/metrics", tags=["Monitoring"])
+async def metrics_endpoint():
+    """Prometheus / Azure Monitor compatible diagnostic metrics summary."""
+    return metrics_client.get_summary()
+
 
 if __name__ == "__main__":
     import uvicorn

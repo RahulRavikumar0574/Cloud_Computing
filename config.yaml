@@ -14,11 +14,21 @@ syscall_vocabulary:
   - ptrace
   - capset
   - open
+  - openat
+  - chroot
+  - socket
+  - connect
+  - process_vm_writev
+  - setuid
   - read
   - write
   - close
   - clone
   - bpf
+  - epoll_wait
+  - stat
+  - getpid
+  - futex
 
 # Model Hyperparameters
 hyperparameters:
@@ -37,12 +47,16 @@ escape_scenarios:
   - id: "esc_001"
     name: "Privileged Container Breakout"
     description: "Mounting host filesystem and executing commands"
-    labels: ["mount", "execve"]
+    labels: ["mount", "openat", "chroot", "execve"]
   - id: "esc_002"
-    name: "eBPF Bypass"
-    description: "Tampering with eBPF programs via bpf syscall"
-    labels: ["bpf", "capset"]
+    name: "Mounted Docker Socket Abuse"
+    description: "Abusing mounted docker socket to spawn breakout containers"
+    labels: ["socket", "connect", "write", "execve"]
   - id: "esc_003"
+    name: "Memory Injection"
+    description: "Injecting shellcode via ptrace and cross-memory write"
+    labels: ["ptrace", "process_vm_writev", "capset", "setuid"]
+  - id: "esc_004"
     name: "Namespace Escape"
     description: "Entering host namespaces using nsenter"
     labels: ["nsenter", "execve"]

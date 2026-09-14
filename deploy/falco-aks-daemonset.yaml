@@ -1,0 +1,62 @@
+# ==============================================================================
+# Falco + Falcosidekick DaemonSet for AKS
+# Captures kernel syscall telemetry and forwards JSON events to Azure Blob Storage
+# ==============================================================================
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: falco-security
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: falcosidekick-config
+  namespace: falco-security
+data:
+  settings.yaml: |
+    azure:
+      storage:
+        account: "${AZURE_STORAGE_ACCOUNT}"
+        container: "ingress-telemetry"
+        # Uses AKS Workload Identity / Managed Identity or Key
+---
+apiVersion: helm.toolkit.fluxcd.io/v2beta1
+kind: HelmRelease
+metadata:
+  name: falco
+  namespace: falco-security
+spec:
+  interval: 5m
+  chart:
+    spec:
+      chart: falco
+      version: "4.x"
+      sourceRef:
+        kind: HelmRepository
+        name: falcosecurity
+        namespace: falco-security
+  values:
+    driver:
+      kind: modern_ebpf
+    falcosidekick:
+      enabled: true
+      webui:
+        enabled: false
+      config:
+        azure:
+          storage:
+            account: "${AZURE_STORAGE_ACCOUNT}"
+            container: "ingress-telemetry"
+            uploadtype: "batch"
+            batchsize: 50
+    customRules:
+      container-security.yaml: |-
+        - rule: Container Breakout Syscall Tracing
+          desc: Detect breakout-indicative syscalls (mount, ptrace, chroot, nsenter, capset)
+          condition: >
+            container.id != host and
+            (evt.type in (mount, ptrace, chroot, setns, capset, process_vm_writev, execve) or
+             (evt.type == openat and fd.name startswith "/proc/"))
+          output: "Potential Breakout Syscall: %evt.type by %proc.name (container_id=%container.id pod=%k8s.pod.name ns=%k8s.ns.name res=%evt.res)"
+          priority: WARNING
+          tags: [container, security, breakout]

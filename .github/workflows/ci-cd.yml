@@ -1,0 +1,116 @@
+name: CI/CD Pipeline - Azure Container Security Engine
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  # =========================================================
+  # 1. Automated Unit & Integration Testing
+  # =========================================================
+  test:
+    name: Run Pytest Suite
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Source Code
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.10
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+          cache: "pip"
+
+      - name: Install Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Execute Pytest Suite
+        env:
+          AZURE_STORAGE_CONNECTION_STRING: ""
+          ARTIFACTS_DIR: "artifacts"
+        run: |
+          pytest tests/ -v --junitxml=pytest-results.xml
+
+  # =========================================================
+  # 2. Container Build & ACR Push
+  # =========================================================
+  build-and-push:
+    name: Build & Push Container Image
+    needs: test
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Source Code
+        uses: actions/checkout@v4
+
+      - name: Log in to Azure (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Log in to Azure Container Registry
+        run: |
+          az acr login --name ${{ secrets.ACR_NAME }}
+
+      - name: Build and Push Docker Image
+        run: |
+          IMAGE_NAME="${{ secrets.ACR_LOGIN_SERVER }}/cloud-sec-api"
+          docker build -t "$IMAGE_NAME:${{ github.sha }}" -t "$IMAGE_NAME:latest" -f cloud/Dockerfile .
+          docker push "$IMAGE_NAME:${{ github.sha }}"
+          docker push "$IMAGE_NAME:latest"
+
+  # =========================================================
+  # 3. Deploy to Staging Environment
+  # =========================================================
+  deploy-staging:
+    name: Deploy to ACA Staging
+    needs: build-and-push
+    runs-on: ubuntu-latest
+    environment: staging
+    steps:
+      - name: Log in to Azure
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Update Azure Container App Staging Revision
+        run: |
+          az containerapp update \
+            --name "${{ secrets.CONTAINER_APP_NAME }}-staging" \
+            --resource-group "${{ secrets.AZURE_RESOURCE_GROUP }}" \
+            --image "${{ secrets.ACR_LOGIN_SERVER }}/cloud-sec-api:${{ github.sha }}"
+
+  # =========================================================
+  # 4. Deploy to Production Environment (Gated by Release Approval)
+  # =========================================================
+  deploy-production:
+    name: Deploy to ACA Production
+    needs: deploy-staging
+    runs-on: ubuntu-latest
+    environment: production  # Requires manual approval in GitHub repo settings
+    steps:
+      - name: Log in to Azure
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Update Azure Container App Production Revision
+        run: |
+          az containerapp update \
+            --name "${{ secrets.CONTAINER_APP_NAME }}-prod" \
+            --resource-group "${{ secrets.AZURE_RESOURCE_GROUP }}" \
+            --image "${{ secrets.ACR_LOGIN_SERVER }}/cloud-sec-api:${{ github.sha }}"

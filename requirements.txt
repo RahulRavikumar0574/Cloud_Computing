@@ -5,7 +5,10 @@ shap
 pandas
 numpy
 azure-storage-blob
+azure-identity
+azure-eventgrid
 fastapi
 uvicorn
+pydantic
 pytest
 PyYAML

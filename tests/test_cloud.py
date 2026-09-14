@@ -109,3 +109,37 @@ def test_api_detect_invalid_payload():
     """Tests the /detect API endpoint with an invalid payload."""
     response = client.post("/detect", json={"invalid": "payload"})
     assert response.status_code == 400
+
+def test_api_health_endpoint():
+    """Tests the /health liveness probe."""
+    response = client.get("/health")
+    assert response.status_code == 200
+    data = response.json()
+    assert data["status"] == "healthy"
+    assert data["service"] == "cloud-sec-api"
+    assert "uptime_seconds" in data
+
+def test_api_ready_endpoint():
+    """Tests the /ready readiness probe."""
+    response = client.get("/ready")
+    assert response.status_code == 200
+    data = response.json()
+    assert data["status"] == "ready"
+    assert data["models_loaded"] is True
+    assert "storage_mode" in data
+    assert "event_grid_mode" in data
+
+def test_api_metrics_endpoint():
+    """Tests the /metrics endpoint."""
+    response = client.get("/metrics")
+    assert response.status_code == 200
+    data = response.json()
+    assert "request_count" in data
+    assert "windows_processed" in data
+
+def test_correlation_id_propagation():
+    """Tests that x-correlation-id is returned in response headers and detect payload."""
+    custom_cid = "test-cid-98765"
+    response = client.get("/health", headers={"x-correlation-id": custom_cid})
+    assert response.headers.get("x-correlation-id") == custom_cid
+
