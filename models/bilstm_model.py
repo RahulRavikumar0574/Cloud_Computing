@@ -20,11 +20,26 @@ class SyscallBiLSTM(nn.Module):
         self.fc = nn.Linear(hidden_dim * 2, 1)
         
     def forward(self, x):
+        if x.dim() == 1:
+            x = x.unsqueeze(0)
         embedded = self.embedding(x)
         lstm_out, _ = self.lstm(embedded)
-        # Take the output of the last time step
-        last_out = lstm_out[:, -1, :]
-        out = self.fc(last_out)
+        
+        # Calculate actual lengths excluding padding token 0
+        lengths = (x != 0).sum(dim=1).clamp(min=1)
+        batch_size = x.size(0)
+        hidden_dim = self.lstm.hidden_size
+        
+        # Extract forward feature at last valid token and backward feature at token 0
+        forward_feats = lstm_out[:, :, :hidden_dim]
+        backward_feats = lstm_out[:, :, hidden_dim:]
+        
+        idx = (lengths - 1).long()
+        last_forward = forward_feats[torch.arange(batch_size, device=x.device), idx, :]
+        first_backward = backward_feats[:, 0, :]
+        
+        pooled = torch.cat([last_forward, first_backward], dim=-1)
+        out = self.fc(pooled)
         return out.squeeze(-1)
 
 class SyscallDataset(Dataset):

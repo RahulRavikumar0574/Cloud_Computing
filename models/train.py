@@ -2,10 +2,9 @@ import argparse
 import pandas as pd
 import numpy as np
 from sklearn.model_selection import train_test_split
-from pathlib import Path
 import sys
-import subprocess
-import os
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from models.bilstm_model import train_bilstm, save_bilstm_model
 from models.xgboost_model import train_xgboost, save_xgboost_model

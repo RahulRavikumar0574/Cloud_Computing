@@ -86,7 +86,7 @@ async def run(request: Request):
     body_str = body_bytes.decode("utf-8").strip()
 
     if not body_str:
-        return {"status": "success", "message": "No events to process", "reports": []}
+        return {"status": "success", "message": "No events to process", "processed_windows": 0, "threats_detected": 0, "reports": []}
 
     try:
         # Try standard JSON array first
@@ -102,14 +102,14 @@ async def run(request: Request):
         raise HTTPException(status_code=400, detail="Payload must be a list of events")
         
     if not payload:
-        return {"status": "success", "message": "No events to process", "reports": []}
+        return {"status": "success", "message": "No events to process", "processed_windows": 0, "threats_detected": 0, "reports": []}
         
     # Process through pipeline
     window_builder = SessionWindowBuilder(window_size_events=50)
     windows = window_builder.build_windows(payload)
     
     if not windows:
-        return {"status": "success", "message": "No complete windows built", "reports": []}
+        return {"status": "success", "message": "No complete windows built", "processed_windows": 0, "threats_detected": 0, "reports": []}
         
     X_tabular, _ = Globals.tabular_extractor.extract(windows)
     X_seq = Globals.tokenizer.transform(windows)
