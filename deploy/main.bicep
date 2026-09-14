@@ -10,6 +10,9 @@ param environment string = 'prod'
 @description('Container image tag')
 param imageTag string = 'latest'
 
+@description('Whether to deploy Container App resource. Set false during stage 1 to provision ACR before image build.')
+param deployContainerApp bool = true
+
 var uniqueSuffix = substring(uniqueString(resourceGroup().id), 0, 6)
 var acrName = replace('${prefix}acr${uniqueSuffix}', '-', '')
 var storageAccountName = replace('${prefix}sa${uniqueSuffix}', '-', '')
@@ -18,7 +21,7 @@ var containerAppEnvName = '${prefix}-cae-${environment}'
 var containerAppName = '${prefix}-api-${environment}'
 var eventGridTopicName = '${prefix}-egt-${environment}'
 
-// 1. Azure Container Registry
+// 1. Azure Container Registry (Admin credentials disabled, using Managed Identity)
 resource acr 'Microsoft.ContainerRegistry/registries@2023-07-01' = {
   name: acrName
   location: location
@@ -26,7 +29,7 @@ resource acr 'Microsoft.ContainerRegistry/registries@2023-07-01' = {
     name: 'Basic'
   }
   properties: {
-    adminUserEnabled: true
+    adminUserEnabled: false
   }
 }
 
@@ -97,8 +100,8 @@ resource containerAppEnv 'Microsoft.App/managedEnvironments@2023-05-01' = {
   }
 }
 
-// 6. Container App (FastAPI Security Engine)
-resource containerApp 'Microsoft.App/containerApps@2023-05-01' = {
+// 6. Container App (FastAPI Security Engine) - Authenticates to ACR via System-Assigned Managed Identity
+resource containerApp 'Microsoft.App/containerApps@2023-05-01' = if (deployContainerApp) {
   name: containerAppName
   location: location
   identity: {
@@ -113,17 +116,10 @@ resource containerApp 'Microsoft.App/containerApps@2023-05-01' = {
         transport: 'auto'
         allowInsecure: false
       }
-      secrets: [
-        {
-          name: 'acr-password'
-          value: acr.listCredentials().passwords[0].value
-        }
-      ]
       registries: [
         {
           server: acr.properties.loginServer
-          username: acr.listCredentials().username
-          passwordSecretRef: 'acr-password'
+          identity: 'system'
         }
       ]
     }
@@ -190,30 +186,43 @@ resource containerApp 'Microsoft.App/containerApps@2023-05-01' = {
   }
 }
 
-// Role Assignments for Managed Identity
+// Role Assignments for Container App System-Assigned Managed Identity
+
+// AcrPull role: 7f951dda-4ed3-4680-a7ca-43fe172d538d (Allows Container App to pull image without passwords)
+resource acrPullRoleAssignment 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (deployContainerApp) {
+  name: guid(acr.id, containerAppName, 'AcrPull')
+  scope: acr
+  properties: {
+    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '7f951dda-4ed3-4680-a7ca-43fe172d538d')
+    principalId: deployContainerApp ? containerApp.identity.principalId : ''
+    principalType: 'ServicePrincipal'
+  }
+}
+
 // Storage Blob Data Contributor: ba92f5b4-2d11-453d-a403-e96b0029c9fe
-resource storageRoleAssignment 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
-  name: guid(storageAccount.id, containerApp.id, 'StorageBlobDataContributor')
+resource storageRoleAssignment 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (deployContainerApp) {
+  name: guid(storageAccount.id, containerAppName, 'StorageBlobDataContributor')
   scope: storageAccount
   properties: {
     roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'ba92f5b4-2d11-453d-a403-e96b0029c9fe')
-    principalId: containerApp.identity.principalId
+    principalId: deployContainerApp ? containerApp.identity.principalId : ''
     principalType: 'ServicePrincipal'
   }
 }
 
 // EventGrid Data Sender: d5a91429-5739-47e0-306b-3470040c5e7b
-resource eventGridRoleAssignment 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
-  name: guid(eventGridTopic.id, containerApp.id, 'EventGridDataSender')
+resource eventGridRoleAssignment 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (deployContainerApp) {
+  name: guid(eventGridTopic.id, containerAppName, 'EventGridDataSender')
   scope: eventGridTopic
   properties: {
     roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'd5a91429-5739-47e0-306b-3470040c5e7b')
-    principalId: containerApp.identity.principalId
+    principalId: deployContainerApp ? containerApp.identity.principalId : ''
     principalType: 'ServicePrincipal'
   }
 }
 
-output apiEndpoint string = 'https://${containerApp.properties.configuration.ingress.fqdn}'
+output acrName string = acr.name
 output acrLoginServer string = acr.properties.loginServer
 output storageAccountName string = storageAccount.name
 output eventGridTopicEndpoint string = eventGridTopic.properties.endpoint
+output apiEndpoint string = deployContainerApp ? 'https://${containerApp.properties.configuration.ingress.fqdn}' : ''
