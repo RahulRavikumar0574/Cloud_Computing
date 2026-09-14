@@ -1,0 +1,36 @@
+{
+  "incident_id": "171ab996-93bc-4a1f-9487-f7b58a31be05",
+  "container_id": "2eec8f34f1ef",
+  "pod_name": "pod-164b81f9",
+  "overall_risk_score": 0.7192893922328949,
+  "bilstm_score": 0.46557849645614624,
+  "xgb_score": 0.9730002880096436,
+  "attack_classification": "Privileged Container Escape",
+  "shap_top_indicators": [
+    {
+      "feature": "ratio_unique_syscalls",
+      "contribution": 4.161574363708496,
+      "description": "ratio_unique_syscalls contributed +4.1616 to breakout risk"
+    },
+    {
+      "feature": "count_mount",
+      "contribution": 0.501284658908844,
+      "description": "count_mount contributed +0.5013 to breakout risk"
+    },
+    {
+      "feature": "event_burst_count",
+      "contribution": 0.18935862183570862,
+      "description": "event_burst_count contributed +0.1894 to breakout risk"
+    },
+    {
+      "feature": "count_connect",
+      "contribution": -0.11666786670684814,
+      "description": "count_connect contributed -0.1167 to breakout risk"
+    },
+    {
+      "feature": "ratio_failed_syscalls",
+      "contribution": 0.052486684173345566,
+      "description": "ratio_failed_syscalls contributed +0.0525 to breakout risk"
+    }
+  ]
+}

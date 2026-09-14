@@ -1,0 +1,36 @@
+{
+  "incident_id": "89cb34cc-d1ee-4f7b-8191-dee0dbd9c440",
+  "container_id": "da21b92fdb72",
+  "pod_name": "pod-b92071d7",
+  "overall_risk_score": 0.7039131373167038,
+  "bilstm_score": 0.46557751297950745,
+  "xgb_score": 0.9422487616539001,
+  "attack_classification": "Memory Injection",
+  "shap_top_indicators": [
+    {
+      "feature": "ratio_unique_syscalls",
+      "contribution": 3.2688515186309814,
+      "description": "ratio_unique_syscalls contributed +3.2689 to breakout risk"
+    },
+    {
+      "feature": "event_burst_count",
+      "contribution": 0.5909581184387207,
+      "description": "event_burst_count contributed +0.5910 to breakout risk"
+    },
+    {
+      "feature": "count_ptrace",
+      "contribution": 0.3071160614490509,
+      "description": "count_ptrace contributed +0.3071 to breakout risk"
+    },
+    {
+      "feature": "count_connect",
+      "contribution": -0.14056816697120667,
+      "description": "count_connect contributed -0.1406 to breakout risk"
+    },
+    {
+      "feature": "count_mount",
+      "contribution": -0.07622870057821274,
+      "description": "count_mount contributed -0.0762 to breakout risk"
+    }
+  ]
+}

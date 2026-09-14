@@ -1,0 +1,11 @@
+torch
+xgboost
+scikit-learn
+shap
+pandas
+numpy
+azure-storage-blob
+fastapi
+uvicorn
+pytest
+PyYAML

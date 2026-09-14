@@ -1,0 +1,48 @@
+# Cloud Security Framework Configuration
+
+# Data Processing Settings
+data:
+  window_size_ms: 1000
+  sequence_length: 50
+  batch_size: 32
+
+# System Call Vocabulary (for tokenization)
+syscall_vocabulary:
+  - execve
+  - mount
+  - nsenter
+  - ptrace
+  - capset
+  - open
+  - read
+  - write
+  - close
+  - clone
+  - bpf
+
+# Model Hyperparameters
+hyperparameters:
+  xgboost:
+    learning_rate: 0.1
+    max_depth: 5
+    n_estimators: 100
+  bilstm:
+    hidden_size: 64
+    num_layers: 2
+    dropout: 0.2
+    learning_rate: 0.001
+
+# Simulated Escape Scenario Labels
+escape_scenarios:
+  - id: "esc_001"
+    name: "Privileged Container Breakout"
+    description: "Mounting host filesystem and executing commands"
+    labels: ["mount", "execve"]
+  - id: "esc_002"
+    name: "eBPF Bypass"
+    description: "Tampering with eBPF programs via bpf syscall"
+    labels: ["bpf", "capset"]
+  - id: "esc_003"
+    name: "Namespace Escape"
+    description: "Entering host namespaces using nsenter"
+    labels: ["nsenter", "execve"]

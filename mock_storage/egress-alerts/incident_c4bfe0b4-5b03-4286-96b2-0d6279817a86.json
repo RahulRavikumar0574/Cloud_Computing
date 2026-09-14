@@ -1,0 +1,36 @@
+{
+  "incident_id": "c4bfe0b4-5b03-4286-96b2-0d6279817a86",
+  "container_id": "fe1bc3653504",
+  "pod_name": "pod-dfd733df",
+  "overall_risk_score": 0.6910630166530609,
+  "bilstm_score": 0.465578556060791,
+  "xgb_score": 0.9165474772453308,
+  "attack_classification": "Mounted Docker Socket Abuse",
+  "shap_top_indicators": [
+    {
+      "feature": "ratio_unique_syscalls",
+      "contribution": 2.8719544410705566,
+      "description": "ratio_unique_syscalls contributed +2.8720 to breakout risk"
+    },
+    {
+      "feature": "count_connect",
+      "contribution": 0.753399670124054,
+      "description": "count_connect contributed +0.7534 to breakout risk"
+    },
+    {
+      "feature": "count_mount",
+      "contribution": -0.052721329033374786,
+      "description": "count_mount contributed -0.0527 to breakout risk"
+    },
+    {
+      "feature": "count_ptrace",
+      "contribution": -0.0359165258705616,
+      "description": "count_ptrace contributed -0.0359 to breakout risk"
+    },
+    {
+      "feature": "event_burst_count",
+      "contribution": 0.017622942104935646,
+      "description": "event_burst_count contributed +0.0176 to breakout risk"
+    }
+  ]
+}
