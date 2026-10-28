@@ -118,6 +118,7 @@ class SecurityInferenceEngine:
                 "pod_name": pod_name,
                 "event_count": len(window.get("events", [])),
                 "labelled_attack_type": window.get("attack_type", "None"),
+                "scenario": (window.get("events") or [{}])[0].get("scenario", ""),
                 "overall_risk_score": overall_risk_score,
                 "bilstm_score": bilstm_score,
                 "xgb_score": xgb_score,

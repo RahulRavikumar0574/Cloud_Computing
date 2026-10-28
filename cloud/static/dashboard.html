@@ -167,10 +167,10 @@
 
   <section>
     <h2>Simulate an attack</h2>
-    <p class="hint" style="margin:-6px 0 12px">Generates synthetic container sessions with the project's attack simulator (privileged escape, Docker socket abuse, memory injection), scores them live, and publishes any detections to Storage and Event Grid.</p>
+    <p class="hint" style="margin:-6px 0 12px">Generates synthetic container sessions with the project's attack simulator — four escape techniques (privileged escape, Docker socket abuse, memory injection, namespace escape), each run openly or stealthily, mixed with normal workloads — scores them live, and publishes any detections to Storage and Event Grid.</p>
     <form class="controls" id="sim-form">
-      <div class="field"><label for="attacks">Attack sessions</label><input id="attacks" type="number" min="0" max="20" value="3"></div>
-      <div class="field"><label for="normals">Normal sessions</label><input id="normals" type="number" min="0" max="20" value="5"></div>
+      <div class="field"><label for="attacks">Attack sessions</label><input id="attacks" type="number" min="0" max="20" value="6"></div>
+      <div class="field"><label for="normals">Normal sessions</label><input id="normals" type="number" min="0" max="20" value="8"></div>
       <button type="submit" id="run">Run simulation</button>
     </form>
     <div id="sim-error" class="error" hidden></div>
@@ -178,11 +178,11 @@
       <div class="summary" id="summary"></div>
       <div class="table-wrap">
         <table>
-          <thead><tr><th>Container</th><th>Simulated as</th><th>Events</th><th>Risk score vs threshold</th><th>BiLSTM</th><th>XGBoost</th><th>Verdict</th></tr></thead>
+          <thead><tr><th>Container</th><th>Scenario (simulated)</th><th>Events</th><th>Risk score vs threshold</th><th>BiLSTM</th><th>XGBoost</th><th>Verdict</th></tr></thead>
           <tbody id="rows"></tbody>
         </table>
       </div>
-      <p class="hint">"Simulated as" is the label the simulator attached to the data; the verdict comes only from the models. The black line marks the detection threshold.</p>
+      <p class="hint">"Scenario" is what the simulator generated; the verdict comes only from the models. The black line marks the detection threshold. Grey-area workloads (database clients, maintenance jobs, debuggers) use some of the same syscalls as attacks, and stealthy attacks run only part of their chain, so their scores land in between.</p>
       <h2 style="margin-top:24px">Detected incidents</h2>
       <div class="incidents" id="incidents"></div>
     </div>
@@ -281,7 +281,8 @@
       const tr = el("tr");
       tr.append(
         el("td", { class: "mono" }, w.container_id),
-        el("td", {}, w.labelled_attack_type === "None" ? "Normal workload" : w.labelled_attack_type),
+        el("td", { class: w.labelled_attack_type === "None" ? "" : "verdict hot" },
+           w.scenario || (w.labelled_attack_type === "None" ? "Normal workload" : w.labelled_attack_type)),
         el("td", { class: "num" }, w.event_count),
       );
       const risk = el("td"); risk.append(riskCell(w.overall_risk_score, threshold)); tr.append(risk);
