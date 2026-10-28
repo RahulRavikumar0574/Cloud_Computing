@@ -15,8 +15,15 @@ RUN python -m venv /opt/venv
 ENV PATH="/opt/venv/bin:$PATH"
 
 COPY requirements.txt .
+# Install CPU-only PyTorch first so requirements.txt doesn't pull multi-GB CUDA wheels
 RUN pip install --no-cache-dir --upgrade pip && \
-    pip install --no-cache-dir -r requirements.txt
+    pip install --no-cache-dir torch --index-url https://download.pytorch.org/whl/cpu && \
+    pip install --no-cache-dir -r requirements.txt && \
+    pip uninstall -y nvidia-nccl-cu12
+
+# Stage torch separately so it ships as its own image layer (keeps each registry upload smaller)
+RUN mkdir -p /opt/split && \
+    mv /opt/venv/lib/python3.10/site-packages/torch /opt/split/torch
 
 # =========================================================
 # Stage 2: Hardened Runtime Container
@@ -36,6 +43,7 @@ WORKDIR /app
 
 # Copy virtual environment from builder stage
 COPY --from=builder /opt/venv /opt/venv
+COPY --from=builder /opt/split/torch /opt/venv/lib/python3.10/site-packages/torch
 ENV PATH="/opt/venv/bin:$PATH"
 
 # Copy application modules and model artifacts
@@ -46,6 +54,9 @@ COPY --chown=appuser:appgroup models/ models/
 COPY --chown=appuser:appgroup preprocessing/ preprocessing/
 COPY --chown=appuser:appgroup telemetry/ telemetry/
 COPY --chown=appuser:appgroup config.yaml .
+
+# Writable directory for local mock-mode storage/events fallback
+RUN mkdir -p mock_storage && chown appuser:appgroup mock_storage
 
 # Security & Runtime environment variables
 ENV PYTHONUNBUFFERED=1 \

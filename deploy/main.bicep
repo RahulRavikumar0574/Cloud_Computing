@@ -21,7 +21,8 @@ var containerAppEnvName = '${prefix}-cae-${environment}'
 var containerAppName = '${prefix}-api-${environment}'
 var eventGridTopicName = '${prefix}-egt-${environment}'
 
-// 1. Azure Container Registry (Admin credentials disabled, using Managed Identity)
+// 1. Azure Container Registry
+// Admin credentials enabled: Express Container Apps environments don't support managed identity for registry pulls
 resource acr 'Microsoft.ContainerRegistry/registries@2023-07-01' = {
   name: acrName
   location: location
@@ -29,7 +30,7 @@ resource acr 'Microsoft.ContainerRegistry/registries@2023-07-01' = {
     name: 'Basic'
   }
   properties: {
-    adminUserEnabled: false
+    adminUserEnabled: true
   }
 }
 
@@ -100,7 +101,8 @@ resource containerAppEnv 'Microsoft.App/managedEnvironments@2023-05-01' = {
   }
 }
 
-// 6. Container App (FastAPI Security Engine) - Authenticates to ACR via System-Assigned Managed Identity
+// 6. Container App (FastAPI Security Engine) - Pulls from ACR with admin credentials (stored as a secret);
+//    System-Assigned Managed Identity is still used for Storage and Event Grid
 resource containerApp 'Microsoft.App/containerApps@2023-05-01' = if (deployContainerApp) {
   name: containerAppName
   location: location
@@ -116,10 +118,17 @@ resource containerApp 'Microsoft.App/containerApps@2023-05-01' = if (deployConta
         transport: 'auto'
         allowInsecure: false
       }
+      secrets: [
+        {
+          name: 'acr-password'
+          value: acr.listCredentials().passwords[0].value
+        }
+      ]
       registries: [
         {
           server: acr.properties.loginServer
-          identity: 'system'
+          username: acr.listCredentials().username
+          passwordSecretRef: 'acr-password'
         }
       ]
     }
@@ -210,12 +219,12 @@ resource storageRoleAssignment 'Microsoft.Authorization/roleAssignments@2022-04-
   }
 }
 
-// EventGrid Data Sender: d5a91429-5739-47e0-306b-3470040c5e7b
+// EventGrid Data Sender: d5a91429-5739-47e2-a06b-3470a27159e7
 resource eventGridRoleAssignment 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (deployContainerApp) {
   name: guid(eventGridTopic.id, containerAppName, 'EventGridDataSender')
   scope: eventGridTopic
   properties: {
-    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'd5a91429-5739-47e0-306b-3470040c5e7b')
+    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'd5a91429-5739-47e2-a06b-3470a27159e7')
     principalId: deployContainerApp ? containerApp.identity.principalId : ''
     principalType: 'ServicePrincipal'
   }
