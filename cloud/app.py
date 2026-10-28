@@ -8,8 +8,8 @@ from contextlib import asynccontextmanager
 from typing import List, Dict, Any, Optional
 from pathlib import Path
 
-from fastapi import FastAPI, Request, HTTPException, status
-from fastapi.responses import JSONResponse
+from fastapi import FastAPI, Request, HTTPException, Query, status
+from fastapi.responses import JSONResponse, FileResponse
 from pydantic import BaseModel, Field
 
 # Ensure project root is in sys.path
@@ -20,6 +20,9 @@ from cloud.azure_storage import AzureBlobTelemetryIngester
 from cloud.event_dispatcher import SecurityEventDispatcher
 from cloud.engine import SecurityInferenceEngine
 from cloud.monitoring import metrics_client
+from telemetry.attack_simulator import generate_session
+
+DASHBOARD_PATH = Path(__file__).resolve().parent / "static" / "dashboard.html"
 
 # Alias classes into __main__ namespace to resolve pickle loading mismatch
 sys.modules['__main__'].SequenceTokenizer = SequenceTokenizer
@@ -135,7 +138,41 @@ class DetectionResponse(BaseModel):
     message: Optional[str] = None
 
 
+def publish_reports(reports: List[Dict[str, Any]], processed_windows: int) -> List[Dict[str, Any]]:
+    """
+    Uploads each incident report to egress storage, dispatches it to Event Grid,
+    and records inference metrics. Returns where each incident was delivered.
+    """
+    deliveries = []
+    for report in reports:
+        # Upload to egress alerts storage
+        report_name = f"incident_{report['incident_id']}.json"
+        stored = Globals.ingester.upload_egress_report(report_name, report) if Globals.ingester else False
+
+        # Dispatch to Azure Event Grid
+        dispatch = Globals.dispatcher.dispatch_incident(report) if Globals.dispatcher else {}
+
+        deliveries.append({
+            "incident_id": report["incident_id"],
+            "blob_name": report_name,
+            "stored": stored,
+            "storage_mode": Globals.ingester.auth_mode if Globals.ingester else "unknown",
+            "event_status": dispatch.get("status", "skipped"),
+            "event_mode": dispatch.get("mode", "unknown")
+        })
+
+    # Track telemetry metrics
+    max_risk = max([r.get("overall_risk_score", 0.0) for r in reports], default=0.0)
+    metrics_client.record_inference(processed_windows, len(reports), max_risk)
+    return deliveries
+
+
 # --- Endpoints ---
+
+@app.get("/", include_in_schema=False)
+async def dashboard():
+    """Serves the interactive demo dashboard."""
+    return FileResponse(DASHBOARD_PATH, media_type="text/html")
 
 @app.get("/health", tags=["Health Probes"])
 async def health():
@@ -215,21 +252,7 @@ async def detect(request: Request):
         # Run detection through core engine
         result = Globals.engine.run_detection(payload)
         reports = result.get("reports", [])
-
-        # Process egress uploads and event grid alerts for high risk incidents
-        for report in reports:
-            # Upload to egress alerts storage
-            report_name = f"incident_{report['incident_id']}.json"
-            if Globals.ingester:
-                Globals.ingester.upload_egress_report(report_name, report)
-
-            # Dispatch to Azure Event Grid
-            if Globals.dispatcher:
-                Globals.dispatcher.dispatch_incident(report)
-
-        # Track telemetry metrics
-        max_risk = max([r.get("overall_risk_score", 0.0) for r in reports], default=0.0)
-        metrics_client.record_inference(result.get("processed_windows", 0), len(reports), max_risk)
+        publish_reports(reports, result.get("processed_windows", 0))
 
         return {
             "status": "success",
@@ -249,6 +272,56 @@ async def detect(request: Request):
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Inference error occurred. Reference Correlation ID: {correlation_id}"
         )
+
+
+@app.post("/demo/simulate", tags=["Demo"])
+async def simulate(
+    request: Request,
+    attack_sessions: int = Query(3, ge=0, le=20, description="Number of simulated container-escape sessions"),
+    normal_sessions: int = Query(5, ge=0, le=20, description="Number of simulated benign sessions")
+):
+    """
+    Generates synthetic eBPF telemetry with the attack simulator, runs it through the
+    detection engine, and publishes flagged incidents exactly like /detect does.
+    Also returns per-session scores so the dashboard can show them against the threshold.
+    """
+    correlation_id = getattr(request.state, "correlation_id", str(uuid.uuid4()))
+
+    if not Globals.engine or not Globals.engine.is_ready:
+        raise HTTPException(status_code=503, detail="Inference engine is not ready")
+
+    events = []
+    for _ in range(attack_sessions):
+        events.extend(generate_session(is_threat=True))
+    for _ in range(normal_sessions):
+        events.extend(generate_session(is_threat=False))
+
+    if not events:
+        raise HTTPException(status_code=400, detail="Request at least one session to simulate")
+
+    try:
+        result = Globals.engine.run_detection(events)
+        reports = result.get("reports", [])
+        deliveries = publish_reports(reports, result.get("processed_windows", 0))
+    except Exception as e:
+        metrics_client.record_inference_failure(str(e))
+        logger.error(f"[CID {correlation_id}] Simulation error: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Simulation error occurred. Reference Correlation ID: {correlation_id}"
+        )
+
+    return {
+        "status": "success",
+        "correlation_id": correlation_id,
+        "events_generated": len(events),
+        "processed_windows": result.get("processed_windows", 0),
+        "threats_detected": result.get("threats_detected", 0),
+        "risk_threshold": result.get("risk_threshold"),
+        "window_scores": result.get("window_scores", []),
+        "reports": reports,
+        "deliveries": deliveries
+    }
 
 
 @app.get("/metrics", tags=["Monitoring"])

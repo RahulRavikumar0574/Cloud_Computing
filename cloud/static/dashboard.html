@@ -1,0 +1,386 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Container Breakout Detection</title>
+<style>
+  :root {
+    --bg: #f5f6f8;
+    --surface: #ffffff;
+    --surface-2: #f0f2f5;
+    --border: #dfe3e8;
+    --text: #18202b;
+    --muted: #5d6877;
+    --accent: #0a66c2;
+    --accent-soft: #e3eefa;
+    --ok: #127a3e;
+    --ok-soft: #e2f4e9;
+    --warn: #9a6100;
+    --warn-soft: #fbf0db;
+    --danger: #b42318;
+    --danger-soft: #fbe6e4;
+    --bar: #c9d1db;
+    --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0f141a;
+      --surface: #171e26;
+      --surface-2: #1f2832;
+      --border: #2c3744;
+      --text: #e6ebf1;
+      --muted: #96a3b3;
+      --accent: #5ea8f0;
+      --accent-soft: #1b3047;
+      --ok: #4cc27f;
+      --ok-soft: #173324;
+      --warn: #e3b053;
+      --warn-soft: #3a2e15;
+      --danger: #f2776b;
+      --danger-soft: #3d1d1a;
+      --bar: #3a4756;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font: 15px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+  .wrap { max-width: 1120px; margin: 0 auto; padding: 24px 16px 48px; }
+  header { display: flex; flex-wrap: wrap; gap: 12px; align-items: flex-end; justify-content: space-between; margin-bottom: 20px; }
+  h1 { font-size: 24px; margin: 0 0 4px; letter-spacing: -0.01em; }
+  h2 { font-size: 17px; margin: 0 0 12px; }
+  .sub { color: var(--muted); margin: 0; }
+  .pill { display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border-radius: 999px; font-size: 13px; font-weight: 600; background: var(--surface-2); color: var(--muted); }
+  .pill::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: currentColor; }
+  .pill.ok { background: var(--ok-soft); color: var(--ok); }
+  .pill.bad { background: var(--danger-soft); color: var(--danger); }
+  .grid { display: grid; gap: 12px; }
+  .cards-4 { grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); }
+  .cards-5 { grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); }
+  .card { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px; }
+  .label { font-size: 12px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); margin-bottom: 4px; }
+  .value { font-size: 22px; font-weight: 650; font-variant-numeric: tabular-nums; }
+  .hint { font-size: 13px; color: var(--muted); margin-top: 2px; }
+  section { margin-top: 28px; }
+  .section-head { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: baseline; gap: 8px; }
+  .section-head .hint { margin: 0 0 12px; }
+  .flow { display: flex; flex-wrap: wrap; align-items: stretch; gap: 8px; }
+  .node { flex: 1 1 150px; background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; }
+  .node b { display: block; font-size: 14px; }
+  .node span { font-size: 13px; color: var(--muted); }
+  .node.core { border-color: var(--accent); background: var(--accent-soft); }
+  .arrow { align-self: center; color: var(--muted); font-size: 18px; }
+  form.controls { display: flex; flex-wrap: wrap; gap: 12px; align-items: flex-end; }
+  .field label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px; }
+  .field input { width: 110px; padding: 8px 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); color: var(--text); font: inherit; }
+  button { padding: 9px 18px; border: 0; border-radius: 8px; background: var(--accent); color: #fff; font: inherit; font-weight: 600; cursor: pointer; }
+  button:disabled { opacity: 0.6; cursor: progress; }
+  .summary { margin: 16px 0 12px; display: flex; flex-wrap: wrap; gap: 8px; }
+  .tag { padding: 4px 10px; border-radius: 6px; font-size: 13px; font-weight: 600; background: var(--surface-2); }
+  .tag.danger { background: var(--danger-soft); color: var(--danger); }
+  .tag.ok { background: var(--ok-soft); color: var(--ok); }
+  .table-wrap { overflow-x: auto; background: var(--surface); border: 1px solid var(--border); border-radius: 10px; }
+  table { width: 100%; border-collapse: collapse; font-size: 14px; }
+  th, td { padding: 9px 12px; text-align: left; border-bottom: 1px solid var(--border); white-space: nowrap; }
+  th { font-size: 12px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); font-weight: 600; }
+  tr:last-child td { border-bottom: 0; }
+  td.num { font-variant-numeric: tabular-nums; }
+  .mono { font-family: var(--mono); font-size: 13px; }
+  .risk { display: flex; align-items: center; gap: 8px; min-width: 190px; }
+  .track { position: relative; flex: 1; height: 8px; border-radius: 4px; background: var(--surface-2); }
+  .fill { position: absolute; inset: 0 auto 0 0; border-radius: 4px; background: var(--bar); }
+  .fill.hot { background: var(--danger); }
+  .thresh { position: absolute; top: -4px; bottom: -4px; width: 2px; background: var(--text); opacity: 0.55; }
+  .verdict { font-weight: 600; }
+  .verdict.hot { color: var(--danger); }
+  .verdict.cool { color: var(--ok); }
+  .incidents { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); margin-top: 16px; }
+  .incident h3 { font-size: 15px; margin: 0 0 2px; }
+  .scores { display: flex; gap: 16px; margin: 10px 0; flex-wrap: wrap; }
+  .scores div { font-size: 13px; color: var(--muted); }
+  .scores b { display: block; font-size: 18px; color: var(--text); font-variant-numeric: tabular-nums; }
+  .shap { margin: 8px 0 0; padding: 0; list-style: none; }
+  .shap li { display: grid; grid-template-columns: minmax(0, 1fr) 90px 52px; gap: 8px; align-items: center; font-size: 13px; margin: 5px 0; }
+  .shap .name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .shap .sbar { height: 8px; border-radius: 4px; background: var(--danger); }
+  .shap .sbar.neg { background: var(--ok); }
+  .shap .v { text-align: right; font-variant-numeric: tabular-nums; color: var(--muted); }
+  .delivery { margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--border); font-size: 13px; color: var(--muted); }
+  .delivery div { margin: 2px 0; }
+  .empty { color: var(--muted); padding: 16px; text-align: center; }
+  .error { color: var(--danger); margin-top: 12px; }
+  footer { margin-top: 36px; color: var(--muted); font-size: 13px; display: flex; flex-wrap: wrap; gap: 16px; }
+  footer a { color: var(--accent); }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div>
+      <h1>Container Breakout Detection</h1>
+      <p class="sub">eBPF syscall telemetry scored by an XGBoost + BiLSTM ensemble, explained with SHAP, running on Azure Container Apps.</p>
+    </div>
+    <span id="overall" class="pill">Checking…</span>
+  </header>
+
+  <section style="margin-top:0">
+    <h2>Service status</h2>
+    <div class="grid cards-4">
+      <div class="card"><div class="label">API health</div><div class="value" id="s-health">–</div><div class="hint" id="s-uptime">&nbsp;</div></div>
+      <div class="card"><div class="label">ML models</div><div class="value" id="s-models">–</div><div class="hint">XGBoost · BiLSTM · SHAP</div></div>
+      <div class="card"><div class="label">Blob Storage</div><div class="value" id="s-storage">–</div><div class="hint">Incident reports → egress-alerts</div></div>
+      <div class="card"><div class="label">Event Grid</div><div class="value" id="s-events">–</div><div class="hint">Alerts → SecurityAlert.ContainerBreakout</div></div>
+    </div>
+  </section>
+
+  <section>
+    <div class="section-head">
+      <h2>Live metrics</h2>
+      <p class="hint" id="m-updated">Refreshes every 10 seconds</p>
+    </div>
+    <div class="grid cards-5">
+      <div class="card"><div class="label">Requests served</div><div class="value" id="m-requests">–</div></div>
+      <div class="card"><div class="label">Avg latency</div><div class="value" id="m-latency">–</div></div>
+      <div class="card"><div class="label">Sessions analysed</div><div class="value" id="m-windows">–</div></div>
+      <div class="card"><div class="label">Threats detected</div><div class="value" id="m-threats">–</div></div>
+      <div class="card"><div class="label">Highest risk seen</div><div class="value" id="m-maxrisk">–</div></div>
+    </div>
+    <p class="hint">Counters reset whenever the container restarts. Most requests are Azure's own health probes.</p>
+  </section>
+
+  <section>
+    <h2>How a detection flows through Azure</h2>
+    <div class="flow">
+      <div class="node"><b>Telemetry</b><span>eBPF syscall events (simulated here)</span></div>
+      <div class="arrow">→</div>
+      <div class="node core"><b>Container App</b><span>FastAPI image pulled from Azure Container Registry</span></div>
+      <div class="arrow">→</div>
+      <div class="node"><b>Blob Storage</b><span>JSON incident report per threat</span></div>
+      <div class="node"><b>Event Grid</b><span>Alert event for SOC / Sentinel</span></div>
+      <div class="node"><b>Log Analytics</b><span>Container logs &amp; diagnostics</span></div>
+    </div>
+  </section>
+
+  <section>
+    <h2>Simulate an attack</h2>
+    <p class="hint" style="margin:-6px 0 12px">Generates synthetic container sessions with the project's attack simulator (privileged escape, Docker socket abuse, memory injection), scores them live, and publishes any detections to Storage and Event Grid.</p>
+    <form class="controls" id="sim-form">
+      <div class="field"><label for="attacks">Attack sessions</label><input id="attacks" type="number" min="0" max="20" value="3"></div>
+      <div class="field"><label for="normals">Normal sessions</label><input id="normals" type="number" min="0" max="20" value="5"></div>
+      <button type="submit" id="run">Run simulation</button>
+    </form>
+    <div id="sim-error" class="error" hidden></div>
+    <div id="results" hidden>
+      <div class="summary" id="summary"></div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Container</th><th>Simulated as</th><th>Events</th><th>Risk score vs threshold</th><th>BiLSTM</th><th>XGBoost</th><th>Verdict</th></tr></thead>
+          <tbody id="rows"></tbody>
+        </table>
+      </div>
+      <p class="hint">"Simulated as" is the label the simulator attached to the data; the verdict comes only from the models. The black line marks the detection threshold.</p>
+      <h2 style="margin-top:24px">Detected incidents</h2>
+      <div class="incidents" id="incidents"></div>
+    </div>
+  </section>
+
+  <footer>
+    <a href="/docs">Interactive API docs</a>
+    <a href="/redoc">API reference</a>
+    <a href="/metrics">Raw metrics JSON</a>
+  </footer>
+</div>
+
+<script>
+  const $ = (id) => document.getElementById(id);
+  const fmt = (n, d = 2) => Number(n).toFixed(d);
+  const MODE_LABELS = {
+    managed_identity: "Azure (managed identity)",
+    connection_string: "Azure (connection string)",
+    azure_managed_identity: "Azure (managed identity)",
+    azure_key: "Azure (access key)",
+    mock: "Local mock",
+    local: "Local log"
+  };
+  const modeLabel = (m) => MODE_LABELS[m] || m || "–";
+
+  function duration(seconds) {
+    const s = Math.floor(seconds);
+    const d = Math.floor(s / 86400), h = Math.floor((s % 86400) / 3600), m = Math.floor((s % 3600) / 60);
+    if (d) return `${d}d ${h}h`;
+    if (h) return `${h}h ${m}m`;
+    return `${m}m ${s % 60}s`;
+  }
+
+  async function getJson(path) {
+    const res = await fetch(path, { cache: "no-store" });
+    if (!res.ok) throw new Error(`${path} returned ${res.status}`);
+    return res.json();
+  }
+
+  async function refreshStatus() {
+    let healthy = false, ready = false;
+    try {
+      const h = await getJson("/health");
+      healthy = h.status === "healthy";
+      $("s-health").textContent = healthy ? "Healthy" : h.status;
+      $("s-uptime").textContent = `Up ${duration(h.uptime_seconds)}`;
+    } catch { $("s-health").textContent = "Down"; }
+    try {
+      const r = await getJson("/ready");
+      ready = r.models_loaded;
+      $("s-models").textContent = ready ? "Loaded" : "Not loaded";
+      $("s-storage").textContent = modeLabel(r.storage_mode);
+      $("s-events").textContent = modeLabel(r.event_grid_mode);
+    } catch { $("s-models").textContent = "Not ready"; }
+    const pill = $("overall");
+    pill.className = "pill " + (healthy && ready ? "ok" : "bad");
+    pill.textContent = healthy && ready ? "Operational" : "Degraded";
+  }
+
+  async function refreshMetrics() {
+    try {
+      const m = await getJson("/metrics");
+      $("m-requests").textContent = m.request_count.toLocaleString();
+      $("m-latency").textContent = `${fmt(m.avg_latency_ms, 1)} ms`;
+      $("m-windows").textContent = m.windows_processed.toLocaleString();
+      $("m-threats").textContent = m.threats_detected.toLocaleString();
+      $("m-maxrisk").textContent = fmt(m.max_observed_risk, 3);
+      $("m-updated").textContent = `Updated ${new Date().toLocaleTimeString()}`;
+    } catch { $("m-updated").textContent = "Metrics unavailable"; }
+  }
+
+  function el(tag, attrs = {}, text) {
+    const node = document.createElement(tag);
+    for (const [k, v] of Object.entries(attrs)) node.setAttribute(k, v);
+    if (text !== undefined) node.textContent = text;
+    return node;
+  }
+
+  function riskCell(score, threshold) {
+    const wrap = el("div", { class: "risk" });
+    const track = el("div", { class: "track" });
+    const fill = el("div", { class: "fill" + (score >= threshold ? " hot" : "") });
+    fill.style.width = `${Math.min(100, score * 100)}%`;
+    const mark = el("div", { class: "thresh", title: `Threshold ${threshold}` });
+    mark.style.left = `${threshold * 100}%`;
+    track.append(fill, mark);
+    wrap.append(track, el("span", { class: "mono" }, fmt(score, 3)));
+    return wrap;
+  }
+
+  function renderRows(windows, threshold) {
+    const body = $("rows");
+    body.replaceChildren();
+    const sorted = [...windows].sort((a, b) => b.overall_risk_score - a.overall_risk_score);
+    for (const w of sorted) {
+      const tr = el("tr");
+      tr.append(
+        el("td", { class: "mono" }, w.container_id),
+        el("td", {}, w.labelled_attack_type === "None" ? "Normal workload" : w.labelled_attack_type),
+        el("td", { class: "num" }, w.event_count),
+      );
+      const risk = el("td"); risk.append(riskCell(w.overall_risk_score, threshold)); tr.append(risk);
+      tr.append(
+        el("td", { class: "num mono" }, fmt(w.bilstm_score, 3)),
+        el("td", { class: "num mono" }, fmt(w.xgb_score, 3)),
+        el("td", { class: "verdict " + (w.flagged ? "hot" : "cool") }, w.flagged ? "Threat" : "Benign"),
+      );
+      body.append(tr);
+    }
+  }
+
+  function renderIncidents(reports, deliveries) {
+    const box = $("incidents");
+    box.replaceChildren();
+    if (!reports.length) {
+      box.append(el("div", { class: "card empty" }, "No sessions crossed the threshold in this run."));
+      return;
+    }
+    const byId = Object.fromEntries(deliveries.map((d) => [d.incident_id, d]));
+    for (const r of reports) {
+      const card = el("div", { class: "card incident" });
+      card.append(el("h3", {}, r.attack_classification));
+      card.append(el("div", { class: "hint mono" }, `${r.pod_name} · ${r.container_id}`));
+
+      const scores = el("div", { class: "scores" });
+      for (const [name, v] of [["Overall risk", r.overall_risk_score], ["BiLSTM", r.bilstm_score], ["XGBoost", r.xgb_score]]) {
+        const d = el("div"); d.append(el("b", {}, fmt(v, 3)), document.createTextNode(name)); scores.append(d);
+      }
+      card.append(scores);
+
+      card.append(el("div", { class: "label" }, "Why it was flagged (SHAP)"));
+      const list = el("ul", { class: "shap" });
+      const inds = r.shap_top_indicators || [];
+      const maxAbs = Math.max(...inds.map((i) => Math.abs(i.contribution)), 0.0001);
+      for (const ind of inds) {
+        const li = el("li");
+        const bar = el("div", { class: "sbar" + (ind.contribution < 0 ? " neg" : "") });
+        bar.style.width = `${(Math.abs(ind.contribution) / maxAbs) * 100}%`;
+        const barBox = el("div"); barBox.append(bar);
+        li.append(el("span", { class: "name mono", title: ind.description }, ind.feature), barBox,
+                  el("span", { class: "v" }, (ind.contribution >= 0 ? "+" : "") + fmt(ind.contribution, 2)));
+        list.append(li);
+      }
+      card.append(list);
+
+      const d = byId[r.incident_id];
+      if (d) {
+        const del = el("div", { class: "delivery" });
+        del.append(
+          el("div", {}, `Blob Storage: ${d.stored ? "saved" : "not saved"} as egress-alerts/${d.blob_name} (${modeLabel(d.storage_mode)})`),
+          el("div", {}, `Event Grid: ${d.event_status} (${modeLabel(d.event_mode)})`),
+        );
+        card.append(del);
+      }
+      box.append(card);
+    }
+  }
+
+  $("sim-form").addEventListener("submit", async (ev) => {
+    ev.preventDefault();
+    const btn = $("run"), err = $("sim-error");
+    err.hidden = true;
+    btn.disabled = true;
+    btn.textContent = "Running…";
+    try {
+      const params = new URLSearchParams({ attack_sessions: $("attacks").value || 0, normal_sessions: $("normals").value || 0 });
+      const res = await fetch(`/demo/simulate?${params}`, { method: "POST" });
+      const data = await res.json();
+      if (!res.ok) throw new Error(typeof data.detail === "string" ? data.detail : JSON.stringify(data.detail));
+
+      const flaggedAttacks = data.window_scores.filter((w) => w.flagged && w.labelled_attack_type !== "None").length;
+      const attacks = data.window_scores.filter((w) => w.labelled_attack_type !== "None").length;
+      const falseAlarms = data.window_scores.filter((w) => w.flagged && w.labelled_attack_type === "None").length;
+      const summary = $("summary");
+      summary.replaceChildren(
+        el("span", { class: "tag" }, `${data.events_generated} syscall events · ${data.processed_windows} sessions`),
+        el("span", { class: "tag " + (data.threats_detected ? "danger" : "ok") }, `${data.threats_detected} threats detected`),
+        el("span", { class: "tag" }, `${flaggedAttacks} of ${attacks} attacks caught`),
+        el("span", { class: "tag " + (falseAlarms ? "danger" : "ok") }, `${falseAlarms} false alarms`),
+        el("span", { class: "tag" }, `Threshold ${data.risk_threshold}`),
+      );
+      renderRows(data.window_scores, data.risk_threshold);
+      renderIncidents(data.reports, data.deliveries);
+      $("results").hidden = false;
+      refreshMetrics();
+    } catch (e) {
+      err.textContent = `Simulation failed: ${e.message}`;
+      err.hidden = false;
+    } finally {
+      btn.disabled = false;
+      btn.textContent = "Run simulation";
+    }
+  });
+
+  refreshStatus();
+  refreshMetrics();
+  setInterval(refreshMetrics, 10000);
+  setInterval(refreshStatus, 30000);
+</script>
+</body>
+</html>

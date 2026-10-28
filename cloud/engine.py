@@ -103,6 +103,7 @@ class SecurityInferenceEngine:
         xgb_probs = xgb_preds_proba[:, 1] if xgb_preds_proba.shape[1] > 1 else xgb_preds_proba[:, 0]
 
         reports = []
+        window_scores = []
         for i, window in enumerate(windows):
             container_id = window.get("container_id", "unknown")
             pod_name = window.get("pod_name", "unknown")
@@ -110,8 +111,20 @@ class SecurityInferenceEngine:
             xgb_score = float(xgb_probs[i])
 
             overall_risk_score = (bilstm_score + xgb_score) / 2.0
+            flagged = overall_risk_score >= self.risk_threshold
 
-            if overall_risk_score >= self.risk_threshold:
+            window_scores.append({
+                "container_id": container_id,
+                "pod_name": pod_name,
+                "event_count": len(window.get("events", [])),
+                "labelled_attack_type": window.get("attack_type", "None"),
+                "overall_risk_score": overall_risk_score,
+                "bilstm_score": bilstm_score,
+                "xgb_score": xgb_score,
+                "flagged": flagged
+            })
+
+            if flagged:
                 session_features = X_tabular.iloc[i].values
                 explanation = self.xai_explainer.explain_session(session_features)
 
@@ -132,5 +145,7 @@ class SecurityInferenceEngine:
             "status": "success",
             "processed_windows": len(windows),
             "threats_detected": len(reports),
-            "reports": reports
+            "reports": reports,
+            "window_scores": window_scores,
+            "risk_threshold": self.risk_threshold
         }
